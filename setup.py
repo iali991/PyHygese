@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Extension
 from setuptools.command.build_ext import build_ext as _build_ext
 from setuptools.command.build_py import build_py as _build_py
 import subprocess
@@ -6,6 +6,8 @@ import os
 import platform
 from os.path import exists, join as pjoin
 import shutil
+from Cython.Build import cythonize
+import numpy as np
 
 import urllib.request
 urlretrieve = urllib.request.urlretrieve
@@ -32,7 +34,7 @@ def _safe_makedirs(*paths):
 # HGS_VERSION = "0.1.0"
 # HGS_SRC = f"https://github.com/chkwon/HGS-CVRP/archive/v{HGS_VERSION}.tar.gz"
 
-HGS_VERSION = "f40c0a465f0df99db3e17c89bf8d9f2f3f0f383a"
+HGS_VERSION = "0b225b6ea343a0074d5285cbec0b5214092da293"
 HGS_SRC = f"https://github.com/chkwon/HGS-CVRP/archive/{HGS_VERSION}.tar.gz"
 
 
@@ -43,7 +45,7 @@ HGS_CVRP_WIN = f"https://github.com/chkwon/Libhgscvrp_jll.jl/releases/download/l
 LIB_DIR = "lib"
 BUILD_DIR = "lib/build"
 BIN_DIR = "lib/bin"
-
+SRC_DIR_NAME = f"HGS-CVRP-{HGS_VERSION}"
 
 def get_lib_filename():
     if platform.system() == "Linux":
@@ -57,43 +59,41 @@ def get_lib_filename():
     return f"libhgscvrp.{lib_ext}"
 
 
-LIB_FILENAME = get_lib_filename()
-
+# LIB_FILENAME = get_lib_filename()
+LIB_FILENAME = "libhgscvrp.a"
 
 def download_build_hgs():
     _safe_makedirs(LIB_DIR)
     _safe_makedirs(BUILD_DIR)
-    hgs_src_tarball_name = "{}.tar.gz".format(HGS_VERSION)
+    hgs_src_tarball_name = f"{HGS_VERSION}.tar.gz"
     hgs_src_path = pjoin(LIB_DIR, hgs_src_tarball_name)
     urlretrieve(HGS_SRC, hgs_src_path)
     _run(f"tar xzvf {hgs_src_tarball_name}", LIB_DIR)
-    _run("cmake -DCMAKE_BUILD_TYPE=Release -G \"Unix Makefiles\" ../HGS-CVRP-{}".format(HGS_VERSION), BUILD_DIR)
-    _run("make lib", BUILD_DIR)
+    _run(f"cmake -DCMAKE_BUILD_TYPE=Release -G \"Unix Makefiles\" ../HGS-CVRP-{HGS_VERSION}", BUILD_DIR)
+    _run("make static_lib", BUILD_DIR)
     _run(f"cp {LIB_FILENAME} ../../hygese/", BUILD_DIR)
-
-
-def download_binary_hgs():
-    print(HGS_CVRP_WIN)
-
-    _safe_makedirs(LIB_DIR)
-    dll_tarball_name = "win_bin.tar.gz"
-    hgs_bin_path = pjoin(LIB_DIR, dll_tarball_name)
-    urlretrieve(HGS_CVRP_WIN, hgs_bin_path)
-    _run(f"tar xzvf {dll_tarball_name}", LIB_DIR)
-    shutil.copyfile(f"{BIN_DIR}/{LIB_FILENAME}", f"hygese/{LIB_FILENAME}")
 
 
 class BuildPyCommand(_build_py):
     def run(self):
         print("Build!!!!!! Run!!!!")
-
-        if platform.system() == "Windows":
-            download_binary_hgs()
-            # download_build_hgs()
-        else:
-            download_build_hgs()
-
+        download_build_hgs()
         _build_py.run(self)
+
+class HgsExtension(Extension, object):
+    """Extension that sets Concorde/QSOpt lib/include args."""
+
+    def __init__(self, *args, **kwargs):
+        super(HgsExtension, self).__init__(*args, **kwargs)
+        download_build_hgs()
+
+        # qsopt_dir = os.environ.get("QSOPT_DIR", "data")
+        # concorde_dir = os.environ.get("CONCORDE_DIR", "data")
+        self.include_dirs.append(pjoin(LIB_DIR, SRC_DIR_NAME, "Program"))
+        self.extra_objects.extend(
+            [pjoin(BUILD_DIR, "libhgscvrp.a")]
+        )
+
 
 
 setup(
@@ -111,14 +111,23 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
+    ext_modules=cythonize(
+        [
+            HgsExtension(
+                "hygese._hygese",
+                sources=["hygese/_hygese.pyx"],
+                include_dirs=[np.get_include()],
+            )
+        ]
+    ),
     package_dir={"": "."},
     packages=find_packages(),
     python_requires=">=3.6",
     cmdclass={
         "build_py": BuildPyCommand,
     },
-    package_data={
-        "": ["libhgscvrp.*"],
-    },
-    install_requires=["numpy"],
+    # package_data={
+    #     "": ["libhgscvrp.*"],
+    # },
+    install_requires=["numpy", "cython"],
 )
